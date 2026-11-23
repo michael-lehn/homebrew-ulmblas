@@ -14,6 +14,7 @@ class Ulmblas < Formula
   url "https://github.com/michael-lehn/ulmBLAS/archive/refs/tags/v0.4.2.tar.gz"
   sha256 "897ff3e954d973de59e60d9ee1980b02cd8838e7c1fd7ec1b47f7666e66b815b"
   license all_of: ["BSD-3-Clause", "BSD-3-Clause-Open-MPI"]
+  revision 1
 
   depends_on "pkgconf" => :test
   depends_on "gcc" # gfortran for LAPACK, libgfortran at run time
@@ -22,6 +23,11 @@ class Ulmblas < Formula
     url "https://github.com/Reference-LAPACK/lapack/archive/refs/tags/v3.12.1.tar.gz"
     sha256 "2ca6407a001a474d4d4d35f3a61550156050c48016d949f0da0529c0aa052422"
   end
+
+  # macOS: libulmlapack re-exports the LAPACK functions that libulmblas has
+  # had since 0.4.2, so programs linked against 0.4.1 load (fixed upstream
+  # after 0.4.2, see the CHANGELOG of 0.4.3)
+  patch :DATA
 
   def install
     ENV["LAPACK_TARBALL"] = resource("lapack").cached_download
@@ -57,3 +63,28 @@ class Ulmblas < Formula
     system "./test"
   end
 end
+
+__END__
+diff --git a/interfaces/lapack/reference/build.sh b/interfaces/lapack/reference/build.sh
+index 12ad7da0..76b33198 100755
+--- a/interfaces/lapack/reference/build.sh
++++ b/interfaces/lapack/reference/build.sh
+@@ -124,8 +124,17 @@ if [ "$SO" = dll ]; then
+     ${DLLTOOL:-dlltool} -d "$BUILD/libulmlapack.def" -D libulmlapack.dll \
+         -l "$LIBDIR/ulmlapack.lib" || exit 1
+ elif [ "$SO" = dylib ]; then
++    #  macOS binds every symbol to the library it came from at link time
++    #  (two-level namespace): programs linked against a libulmlapack that
++    #  still had the routines of LEFT_OUT look for them here, so they are
++    #  re-exported from libulmblas
++    for r in $LEFT_OUT; do echo "_${r}_"; done > "$BUILD/reexported.txt"
++    REEXPORT=
++    if [ -s "$BUILD/reexported.txt" ]; then
++        REEXPORT="-Wl,-reexported_symbols_list,$BUILD/reexported.txt"
++    fi
+     $FC -dynamiclib -install_name @rpath/libulmlapack.dylib \
+-        -Wl,-force_load,"$ARCHIVE" -L"$LIBDIR" -lulmblas \
++        -Wl,-force_load,"$ARCHIVE" -L"$LIBDIR" -lulmblas $REEXPORT \
+         -Wl,-rpath,@loader_path -o "$OUT" || exit 1
+ else
+     $FC -shared -Wl,-soname,libulmlapack.so \
